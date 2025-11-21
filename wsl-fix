@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Step 1: Create User if it doesn't exist
+USER_NAME="addy"
+USER_EXISTS=$(id -u $USER_NAME > /dev/null 2>&1; echo $?)
+
+if [ "$USER_EXISTS" -ne 0 ]; then
+    # Create a new user if it doesn't exist
+    sudo useradd --create-home --groups wheel --password $(echo "1" | openssl passwd -1 -stdin) $USER_NAME
+    echo "User '$USER_NAME' created."
+else
+    echo "User '$USER_NAME' already exists."
+fi
+
+# Step 2: Add user to default user in WSL config
+# Ensure the default user is set in /etc/wsl.conf
+if ! grep -q "^default=addy" /etc/wsl.conf; then
+    sudo bash -c 'echo "[user]" >> /etc/wsl.conf'
+    sudo bash -c 'echo "default=addy" >> /etc/wsl.conf'
+    echo "Set default user to '$USER_NAME' in /etc/wsl.conf."
+else
+    echo "Default user is already set to '$USER_NAME' in /etc/wsl.conf."
+fi
+
+# Step 3: Ensure subuid and subgid are properly configured
+# Add user mappings if they are missing (to avoid duplicates)
+if ! grep -q "^addy:100000:65536" /etc/subuid; then
+    echo "addy:100000:65536" | sudo tee -a /etc/subuid
+    echo "Added 'addy' user UID mappings."
+else
+    echo "'addy' user UID mappings already exist."
+fi
+
+if ! grep -q "^addy:100000:65536" /etc/subgid; then
+    echo "addy:100000:65536" | sudo tee -a /etc/subgid
+    echo "Added 'addy' user GID mappings."
+else
+    echo "'addy' user GID mappings already exist."
+fi
+
+# Step 4: Set capabilities for newuidmap and newgidmap
+# Ensure these utilities have the correct capabilities to modify UID/GID mappings
+sudo setcap cap_setuid=ep /usr/sbin/newuidmap
+sudo setcap cap_setgid=ep /usr/sbin/newgidmap
+echo "Set capabilities for newuidmap and newgidmap."
+
+# Step 5: Fix Podman storage configuration
+# Ensure no syntax errors in storage.conf (ensure no extra spaces before 'driver')
+mkdir -p ~/.config/containers
+cat << EOF > ~/.config/containers/storage.conf
+[storage]
+driver = "vfs"
+EOF
+echo "Podman storage driver set to 'vfs'."
+
+# Step 6: Mount configuration in /etc/wsl.conf (to fix mount issues)
+# Add shared mount configuration to fix rootless Podman mount warnings
+if ! grep -q "options = \"--shared\"" /etc/wsl.conf; then
+    sudo bash -c 'echo "[automount]" >> /etc/wsl.conf'
+    sudo bash -c 'echo "options = \"--shared\"" >> /etc/wsl.conf'
+    echo "Added automount shared option in /etc/wsl.conf."
+else
+    echo "Shared automount already configured in /etc/wsl.conf."
+fi
+
+echo "Setup complete. Please restart WSL for changes to take effect."
+
